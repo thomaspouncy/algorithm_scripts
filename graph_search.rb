@@ -1,12 +1,52 @@
 #! /usr/bin/env ruby
 
 require "benchmark"
+require 'optparse'
 
-$board_height = ARGV[0].to_i
-$board_width = ARGV[1].to_i
-$vertex_density = ARGV[2].to_f/100
-$edge_frequency = ARGV[3].to_i
-times_to_repeat = ARGV[4].to_i
+# Set defaults
+$board_height = 10
+$board_width = 10
+$vertex_density = 0.25
+$edge_frequency = 8
+$times_to_repeat = 1
+$directed_freq = 0.25
+$num_weights = nil
+
+puts "parsing options"
+OptionParser.new do |opts|
+  opts.banner = "Usage: example.rb [options]"
+
+  opts.on("-yHEIGHT", "--height=HEIGHT", "Board height") do |h|
+    $board_height = h.to_i
+  end
+
+  opts.on("-xWIDTH", "--width=WIDTH", "Board width") do |w|
+    $board_width = w.to_i
+  end
+
+  opts.on("-vDENSITY", "--vertex-density=DENSITY", "Vertex density") do |vd|
+    $vertex_density = vd.to_f/100
+  end
+
+  opts.on("-eEDGE", "--edge-frequency=EDGE", "Edge frequency") do |ef|
+    $edge_frequency = ef.to_i
+  end
+
+  opts.on("-tTIMES", "--times=TIMES", "Times to repeat") do |t|
+    $times_to_repeat = t.to_i
+  end
+
+  opts.on("-dDIRECTED", "--directed-freq=DIRECTED", "Directed frequency") do |df|
+    $directed_freq = df.to_f/100
+  end
+
+  opts.on("-nWEIGHTS", "--num-weights=WEIGHTS", "Number of weights") do |nw|
+    raise "This script only supports up to 7 weights (due to color limitations" if nw.to_i > 7 ||nw.to_i < 0
+    $num_weights = nw.to_i
+  end
+end.parse!
+
+puts "options parsed"
 
 Cell = Struct.new(:value,:next)
 
@@ -178,83 +218,171 @@ class Board
     update_position(position,char,"center")
   end
 
-  def add_line(start_position,end_position)
+  def self.colorize_by_weight(char,weight)
+    return char if weight.nil?
+    color_code = 30 + weight    
+
+    return "\e[#{color_code}m#{char}\e[0m"
+  end
+
+  def colorize_by_weight(char,weight)
+    self.class.colorize_by_weight(char,weight)
+  end
+
+  def add_line(start_position,end_position,directed,weight)
+    end_char = colorize_by_weight('*',weight)
+    undirected_chars = {
+      :horizontal => colorize_by_weight('-',weight),
+      :vertical => colorize_by_weight('|',weight),
+      :diagonal_up => colorize_by_weight('/',weight),
+      :diagonal_down => colorize_by_weight('\\',weight),
+    }
+    directed_chars = {
+      :up=>colorize_by_weight('^',weight),
+      :down=>colorize_by_weight('v',weight),
+      :left=>colorize_by_weight('<',weight),
+      :right=>colorize_by_weight('>',weight),
+      :up_left=>colorize_by_weight("\u250f".encode('utf-8'),weight),
+      :up_right=>colorize_by_weight("\u2513".encode('utf-8'),weight),
+      :down_left=>colorize_by_weight("\u2517".encode('utf-8'),weight),
+      :down_right=>colorize_by_weight("\u251B".encode('utf-8'),weight),
+    }
     # on average O(x*y)
     return if start_position == end_position
     
     if start_position.last == end_position.last
       lower = higher = nil
+      line_char = undirected_chars[:horizontal]
+
       if start_position.first < end_position.first 
         lower = start_position.first
         higher = end_position.first
+
+        line_char = directed_chars[:right] if directed 
+
+        update_position([lower,start_position.last],line_char,"right")
+        update_position([higher,start_position.last],end_char,"left")
       else
         lower = end_position.first
         higher = start_position.first
-      end
 
-      update_position([lower,start_position.last],'-',"right")
-      update_position([higher,start_position.last],'-',"left")
+        line_char = directed_chars[:left] if directed 
+
+        update_position([lower,start_position.last],end_char,"right")
+        update_position([higher,start_position.last],line_char,"left")
+      end
 
       # O(sqrt(y^2 + x^2)) in worst case. On average, O(x*y) 
       i = lower+1
       while i < higher
-        update_position([i,start_position.last],'-',"left")
-        update_position([i,start_position.last],'-',"right")
+        update_position([i,start_position.last],line_char,"left")
+        update_position([i,start_position.last],line_char,"right")
       
         i += 1
       end
     elsif start_position.first == end_position.first
       lower = higher = nil
+      line_char = undirected_chars[:vertical]
+
       if start_position.last < end_position.last 
         lower = start_position.last
         higher = end_position.last
+
+        line_char = directed_chars[:down] if directed 
+
+        update_position([start_position.first,lower],line_char,"bottom")
+        update_position([start_position.first,higher],end_char,"top")
       else
         lower = end_position.last
         higher = start_position.last
-      end
 
-      update_position([start_position.first,lower],'|',"bottom")
-      update_position([start_position.first,higher],'|',"top")
+        line_char = directed_chars[:up] if directed 
+
+        update_position([start_position.first,lower],end_char,"bottom")
+        update_position([start_position.first,higher],line_char,"top")
+      end
 
       i = lower+1
       while i < higher
-        update_position([start_position.first,i],'|',"top")
-        update_position([start_position.first,i],'|',"bottom")
+        update_position([start_position.first,i],line_char,"top")
+        update_position([start_position.first,i],line_char,"bottom")
       
         i += 1
       end
     else
       lower = higher = nil
+
+      line_char = ''
+      if start_position.first < end_position.first
+        if start_position.last < end_position.last
+          if directed
+            line_char = directed_chars[:down_right]
+          else
+            line_char = undirected_chars[:diagonal_down]
+          end
+        else
+          if directed
+            line_char = directed_chars[:up_right]
+          else
+            line_char = undirected_chars[:diagonal_up]
+          end
+        end
+      else
+        if start_position.last < end_position.last
+          if directed
+            line_char = directed_chars[:down_left]
+          else
+            line_char = undirected_chars[:diagonal_up]
+          end
+        else
+          if directed
+            line_char = directed_chars[:up_left]
+          else
+            line_char = undirected_chars[:diagonal_down]
+          end
+        end
+      end
+
       if start_position.first < end_position.first
         lower = start_position
         higher = end_position
+
+        if lower.last < higher.last
+          update_position(lower,line_char,'bottomright')
+          update_position(higher,end_char,'topleft')
+        else
+          update_position(lower,line_char,'topright')
+          update_position(higher,end_char,'bottomleft')
+        end
       else
         lower = end_position
         higher = start_position
+
+        if lower.last < higher.last
+          update_position(lower,end_char,'bottomright')
+          update_position(higher,line_char,'topleft')
+        else
+          update_position(lower,end_char,'topright')
+          update_position(higher,line_char,'bottomleft')
+        end
       end
 
       if lower.last < higher.last
-        update_position(lower,'\\','bottomright')
-        update_position(higher,'\\','topleft')
-
         i = lower.first + 1
         j = lower.last + 1
         while i < higher.first
-          update_position([i,j],'\\','topleft')
-          update_position([i,j],'\\','bottomright')
+          update_position([i,j],line_char,'topleft')
+          update_position([i,j],line_char,'bottomright')
 
           i += 1
           j += 1
         end
       else
-        update_position(lower,'/','topright')
-        update_position(higher,'/','bottomleft')
-
         i = lower.first + 1
         j = lower.last - 1
         while i < higher.first
-          update_position([i,j],'/','topright')
-          update_position([i,j],'/','bottomleft')
+          update_position([i,j],line_char,'topright')
+          update_position([i,j],line_char,'bottomleft')
 
           i += 1
           j -= 1
@@ -371,11 +499,19 @@ class Edge
         direction, aligned = Vertex.check_direction_and_alignment(vertex_a,vertex_b)
         # O(1)
         if aligned && board.direction_empty?(vertex_a.position,direction)
-          new_edge = Edge.new(:vertex_a=>vertex_a,:vertex_b=>vertex_b)
+          directed = (rand < $directed_freq)
+          edge_options = {
+            :vertex_a=>vertex_a,:vertex_b=>vertex_b,:directed=>directed
+          }
+          unless $num_weights.nil?
+            weight = rand($num_weights)+1 
+            edge_options[:weight] = weight
+          end
+          new_edge = Edge.new(edge_options)
           new_edges << new_edge
 
           # O(1)
-          board.add_line(vertex_a.position,vertex_b.position)
+          board.add_line(vertex_a.position,vertex_b.position,directed,weight)
         end
       end
     end
@@ -389,12 +525,14 @@ class Graph
 
   def initialize(options)
     # O(nv)
+    self.board = options[:board] || Board.new()
+    
     if !options[:vertices].nil?
       self.vertices = options[:vertices]
       self.edges = options[:edges]
       build_adjacency_list
+      add_to_board
     else
-      self.board = options[:board] || Board.new()
       num_vertices = options[:num_vertices] || ($vertex_density)*($board_width*$board_height)
       num_vertices = num_vertices.to_i
       self.vertices = []
@@ -403,7 +541,7 @@ class Graph
 
       # generate random vertices when no vertices are given
       # O(nv)
-      names = (1..9).to_a + ('a'..'z').to_a+('A'..'Z').to_a
+      names = (1..9).to_a + ('a'..'u').to_a+('w'..'z').to_a+('A'..'Z').to_a
       num_names = names.length
 
       i = 0
@@ -447,6 +585,16 @@ class Graph
 
     self.adjacency_list = adj
   end
+
+  def add_to_board
+    vertices.each do |vertex|
+      board.set_slot(vertex.position,vertex.display_name.to_s)
+    end
+
+    edges.each do |edge|
+      board.add_line(edge.vertex_a,edge.vertex_b,edge.directed,edge.weight)
+    end
+  end
 end
 
 vertices = []
@@ -456,10 +604,20 @@ graph = nil
 # nv = O(y*x)
 # ne = 8*nv*freq = O(y*x)
 # Overall should be O(x*y)
+unless $num_weights.nil?
+  puts "Weights are as follows:"
+  i = 1
+  while i <= $num_weights
+    puts Board.colorize_by_weight(i,i)
+    i += 1
+  end
+end
+
 # Benchmark.bmbm do |x|
-  # times_to_repeat.times do
+  $times_to_repeat.times do
     # x.report("initializing board") do
       # O(y)
+      puts "Generating board of height #{$board_height} and width #{$board_width}"
       $main_board = Board.new(:x_slots=>$board_width,:y_slots=>$board_height)
     # end
 
@@ -468,13 +626,13 @@ graph = nil
       graph = Graph.new(:board=>$main_board)
     # end
 
-    # if times_to_repeat == 1
+    if $times_to_repeat == 1
       # x.report("drawing board") do
         # O(y)
         $main_board.draw
       # end
-    # end
-  # end
+    end
+  end
 # end
 
 # vertices = [
