@@ -2,6 +2,9 @@
 
 require "benchmark"
 require 'optparse'
+require './data_structures.rb'
+require './graph.rb'
+require './tree.rb'
 
 # Set defaults
 $board_height = 10
@@ -12,7 +15,6 @@ $times_to_repeat = 1
 $directed_freq = 0.25
 $num_weights = nil
 
-puts "parsing options"
 OptionParser.new do |opts|
   opts.banner = "Usage: example.rb [options]"
 
@@ -46,54 +48,11 @@ OptionParser.new do |opts|
   end
 end.parse!
 
-puts "options parsed"
+STDOUT.sync = true
 
 Cell = Struct.new(:value,:next)
 
 $nil_cell = Cell.new(nil,nil)
-
-class LinkedList
-  attr_accessor :head, :tail
-
-  def initialize()
-    # O(1)
-    self.head = self.tail = $nil_cell
-  end
-
-  def push(value)
-    # O(1)
-    new_cell = Cell.new(value,$nil_cell)
-    
-    if head == $nil_cell
-      self.head = self.tail = new_cell
-    else
-      self.tail.next = new_cell
-      self.tail = new_cell
-    end
-
-    return head 
-  end
-
-  def pop
-    # O(1)
-    raise "Stack overflow" if head == $nil_cell
-    popped_cell = head
-    self.head = popped_cell.next
-
-    return popped_cell
-  end
-
-  def each
-    # O(1)
-    return enum_for(:each) unless block_given?
-
-    i = head
-    while i != $nil_cell
-      yield i.value
-      i = i.next
-    end
-  end
-end
 
 class Board
   attr_accessor :y_slots, :x_slots, :empty_slot_char, :border_char, :display_matrix
@@ -199,7 +158,7 @@ class Board
     char_at_position(pos.first,pos.last,dir) == ' '
   end
 
-  def draw
+  def to_s
     # O(y) (NOTE: this depends on the performance of join)
     display_matrix.each do |curr_line|
       puts curr_line.join('')
@@ -393,212 +352,6 @@ class Board
   end
 end
 
-class Vertex
-  attr_accessor :position, :display_name
-
-  def initialize(position_array,display_name)
-    # O(1)
-    raise "Invalid position" unless position_array.is_a?(Array) && position_array.length == 2 
-    raise "Positions must be integers" unless position_array.first.is_a?(Integer) && position_array.last.is_a?(Integer)
-    raise "Positions must be strictly positive" unless position_array.first > 0 && position_array.last > 0
-    
-    raise "Invalid display name" if display_name.nil?
-    self.position = position_array 
-    self.display_name = display_name
-  end
-
-  def self.generate_random_vertex(board,name)
-    # O(1)
-
-    begin
-      x_pos = rand(board.x_slots)+1
-      y_pos = rand(board.y_slots)+1
-
-      new_vertex = Vertex.new([x_pos,y_pos],name)
-    end until board.slot_empty?(x_pos,y_pos)
-    
-    board.set_slot(new_vertex.position,new_vertex.display_name.to_s)
-    return new_vertex
-  end
-
-  def self.check_direction_and_alignment(a,b)
-    # O(1)
-    return nil, nil if a == b
-
-    aligned = false
-    direction = ''
-
-    if a.position.last < b.position.last
-      direction = "bottom"
-    elsif a.position.last > b.position.last
-      direction = "top"
-    else
-      aligned = true
-    end
-
-    if a.position.first < b.position.first
-      direction += "right"
-    elsif a.position.first > b.position.first
-      direction += "left"
-    else
-      aligned = true
-    end
-
-    if (a.position.first - b.position.first).abs == (a.position.last - b.position.last).abs
-      # diagonally aligned case
-      aligned = true
-    end
-
-    return direction, aligned
-  end
-
-  def ==(other_vertex)
-    # O(1)
-    return false if other_vertex.nil?
-    self.position == other_vertex.position
-  end
-
-  def <=>(other_vertex)
-    # O(1)
-    if position.last == other_vertex.position.last
-      return position.first <=> other_vertex.position.first
-    else
-      return position.last <=> other_vertex.position.last
-    end
-  end
-end
-
-class Edge
-  attr_accessor :vertex_a, :vertex_b, :directed, :weight
-
-  def initialize(options)
-    # O(1)
-    self.vertex_a = options[:vertex_a]
-    self.vertex_b = options[:vertex_b]
-    raise "Invalid vertices" unless vertex_a.is_a?(Vertex) && vertex_b.is_a?(Vertex)
-
-    self.directed = options[:directed] || false
-    self.weight = options[:weight] || 1
-    raise "Invalid weight" unless weight.is_a?(Integer)
-  end
-
-  def ==(other_edge)
-    # O(1)
-    (vertex_a == other_edge.vertex_a && vertex_b == other_edge.vertex_b) ||
-    (directed != true && other_edge.directed != true && vertex_a == other_edge.vertex_b && vertex_b == other_edge.vertex_a)
-  end
-
-  def self.generate_random_edges_for_vertex(vertex_a,vertices,board)
-    # O(ef)
-    new_edges = []
-    sampled_vertices = vertices.sample($edge_frequency)
-
-    sampled_vertices.each do |vertex_b|
-      unless vertex_b == vertex_a
-        # O(1)
-        direction, aligned = Vertex.check_direction_and_alignment(vertex_a,vertex_b)
-        # O(1)
-        if aligned && board.direction_empty?(vertex_a.position,direction)
-          directed = (rand < $directed_freq)
-          edge_options = {
-            :vertex_a=>vertex_a,:vertex_b=>vertex_b,:directed=>directed
-          }
-          unless $num_weights.nil?
-            weight = rand($num_weights)+1 
-            edge_options[:weight] = weight
-          end
-          new_edge = Edge.new(edge_options)
-          new_edges << new_edge
-
-          # O(1)
-          board.add_line(vertex_a.position,vertex_b.position,directed,weight)
-        end
-      end
-    end
-
-    return new_edges
-  end
-end
-
-class Graph
-  attr_accessor :vertices, :edges, :board, :adjacency_list
-
-  def initialize(options)
-    # O(nv)
-    self.board = options[:board] || Board.new()
-    
-    if !options[:vertices].nil?
-      self.vertices = options[:vertices]
-      self.edges = options[:edges]
-      build_adjacency_list
-      add_to_board
-    else
-      num_vertices = options[:num_vertices] || ($vertex_density)*($board_width*$board_height)
-      num_vertices = num_vertices.to_i
-      self.vertices = []
-      self.edges = []
-      self.adjacency_list = {}
-
-      # generate random vertices when no vertices are given
-      # O(nv)
-      names = (1..9).to_a + ('a'..'u').to_a+('w'..'z').to_a+('A'..'Z').to_a
-      num_names = names.length
-
-      i = 0
-      num_vertices.times do 
-        vertex = Vertex.generate_random_vertex(board,names[i%num_names])
-        self.vertices << vertex
-        self.adjacency_list[vertex] = LinkedList.new()
-        i += 1
-      end
-
-      # O(nv*ef) = O(nv)
-      vertices.each do |vertex|
-        new_edges = Edge.generate_random_edges_for_vertex(vertex,vertices,board)
-       
-        self.edges += new_edges
-        # number of edges should be constant based on edge frequency
-        new_edges.each do |edge|
-          self.adjacency_list[vertex].push(edge.vertex_b)
-          unless edge.directed == true
-            self.adjacency_list[edge.vertex_b].push(vertex)
-          end
-        end
-      end
-    end
-  end
-
-  def build_adjacency_list
-    # O(nv+ne)
-
-    adj = {}
-    vertices.each do |vertex|
-      adj[vertex] = LinkedList.new()
-    end
-
-    edges.each do |edge|
-      adj[edge.vertex_a].push(edge.vertex_b)
-      unless edge.directed == true
-        adj[edge.vertex_b].push(edge.vertex_a)
-      end
-    end
-
-    self.adjacency_list = adj
-  end
-
-  def add_to_board
-    vertices.each do |vertex|
-      board.set_slot(vertex.position,vertex.display_name.to_s)
-    end
-
-    edges.each do |edge|
-      board.add_line(edge.vertex_a,edge.vertex_b,edge.directed,edge.weight)
-    end
-  end
-end
-
-vertices = []
-edges = []
 graph = nil
 
 # nv = O(y*x)
@@ -613,27 +366,21 @@ unless $num_weights.nil?
   end
 end
 
-# Benchmark.bmbm do |x|
-  $times_to_repeat.times do
-    # x.report("initializing board") do
-      # O(y)
-      puts "Generating board of height #{$board_height} and width #{$board_width}"
-      $main_board = Board.new(:x_slots=>$board_width,:y_slots=>$board_height)
-    # end
+$main_board = Board.new(:x_slots=>$board_width,:y_slots=>$board_height)
+graph = Graph.new(:board=>$main_board)
+puts $main_board
+puts "Enter start vertex name:"
+start_vertex_name = gets.chomp
+start_vertex = graph.vertices[start_vertex_name]
+raise "Invalid vertex name" if start_vertex.nil?
+bfs = graph.bfs_for_vertex(start_vertex)
+puts bfs
+# puts "Enter end vertex name: "
+# end_vertex_name = gets.chomp
+# end_vertex = graph.vertices[end_vertex_name]
+# raise "Invalid vertex name" if end_vertex.nil?
 
-    # x.report("initializing graph") do
-      # O(y*x)
-      graph = Graph.new(:board=>$main_board)
-    # end
 
-    if $times_to_repeat == 1
-      # x.report("drawing board") do
-        # O(y)
-        $main_board.draw
-      # end
-    end
-  end
-# end
 
 # vertices = [
 #   Vertex.new([3,3],"1"),
